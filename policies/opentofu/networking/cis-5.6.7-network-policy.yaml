@@ -1,0 +1,16 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-6-7-network-policy
+spec:
+  rules:
+    - name: require-network-policy
+      assert:
+        all:
+          - message: "At least one kubernetes_network_policy resource must be present (default-deny baseline)."
+            check:
+              (length(planned_values.root_module.resources[?type=='kubernetes_network_policy']) > `0`): true
+
+          - message: "GKE cluster must enable network policy enforcement (network_policy.enabled=true) or use Dataplane V2 (datapath_provider=ADVANCED_DATAPATH)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.network_policy) > `0` && values.network_policy[0].enabled == `true`]) > `0` || length(planned_values.root_module.resources[?type=='google_container_cluster' && values.datapath_provider == 'ADVANCED_DATAPATH']) > `0`): true

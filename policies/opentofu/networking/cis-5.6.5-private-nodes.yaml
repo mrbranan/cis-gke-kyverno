@@ -1,0 +1,12 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-6-5-private-nodes
+spec:
+  rules:
+    - name: gke-nodepool-private-nodes
+      assert:
+        all:
+          - message: "All GKE clusters that own node pools must enable private nodes (private_cluster_config.enable_private_nodes=true)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && (length(values.private_cluster_config) == `0` || values.private_cluster_config[0].enable_private_nodes != `true`)]) == `0`): true

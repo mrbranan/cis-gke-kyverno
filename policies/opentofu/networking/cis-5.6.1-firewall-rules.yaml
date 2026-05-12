@@ -1,0 +1,24 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-6-1-firewall-rules
+spec:
+  rules:
+    - name: restrict-firewall-rules
+      assert:
+        all:
+          - message: "Firewall rules must not allow SSH (tcp/22) from 0.0.0.0/0."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_compute_firewall' && values.direction == 'INGRESS' && contains(values.source_ranges, '0.0.0.0/0') && length(values.allow[?protocol == 'tcp' && contains(ports, '22')]) > `0`]) == `0`): true
+
+          - message: "Firewall rules must not allow RDP (tcp/3389) from 0.0.0.0/0."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_compute_firewall' && values.direction == 'INGRESS' && contains(values.source_ranges, '0.0.0.0/0') && length(values.allow[?protocol == 'tcp' && contains(ports, '3389')]) > `0`]) == `0`): true
+
+          - message: "Firewall rules must not allow protocol=all from 0.0.0.0/0."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_compute_firewall' && values.direction == 'INGRESS' && contains(values.source_ranges, '0.0.0.0/0') && length(values.allow[?protocol == 'all']) > `0`]) == `0`): true
+
+          - message: "Each google_compute_firewall must have a name (auditable identifier)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_compute_firewall' && values.name != null]) > `0`): true

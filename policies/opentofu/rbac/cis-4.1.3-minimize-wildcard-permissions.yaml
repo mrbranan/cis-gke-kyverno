@@ -4,12 +4,13 @@ metadata:
   name: cis-4-1-3-minimize-wildcard-permissions
 spec:
   rules:
-    - name: no-wildcard-iam-policies
+    - name: no-wildcard-iam-permissions
       assert:
         all:
-          - message: "IAM policies should not use wildcard (*) permissions for actions."
+          - message: "Custom IAM roles must not declare a wildcard ('*') permission."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && contains(values.policy, '\"Action\":\"*\"')]) == `0`)": true
-          - message: "IAM policies with Resource:* should be limited to specific services like ECR that require it."
+              (length(planned_values.root_module.resources[?type=='google_project_iam_custom_role' && contains(values.permissions, '*')]) == `0`): true
+
+          - message: "No project IAM binding may grant roles/owner (it is a wildcard at the project scope)."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && contains(values.policy, '\"Resource\":\"*\"') && !contains(values.policy, 'ecr:')]) == `0`)": true
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/owner']) == `0`): true

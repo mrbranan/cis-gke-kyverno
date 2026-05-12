@@ -1,0 +1,39 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: custom-5.2.1
+  annotations:
+    policies.kyverno.io/category: CIS 5.2.1
+    policies.kyverno.io/description: 'Checks ServiceAccounts and Namespaces for a
+      GKE Workload Identity binding annotation/label.
+
+      ServiceAccounts must carry the iam.gke.io/gcp-service-account annotation,
+      whose value matches *@*.iam.gserviceaccount.com (a Google Service Account
+      email). Namespaces opting into Workload Identity may carry the label
+      workload-identity: enabled.
+
+      '
+    policies.kyverno.io/cel: 'true'
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+  - name: check-workload-identity
+    match:
+      any:
+      - resources:
+          kinds:
+          - ServiceAccount
+          - Namespace
+    validate:
+      message: ServiceAccounts must declare iam.gke.io/gcp-service-account=<gsa>@<project>.iam.gserviceaccount.com
+        (GKE Workload Identity). Namespaces may opt in with workload-identity=enabled.
+      cel:
+        expressions:
+        - expression: |
+            (has(object.metadata.annotations) && 'iam.gke.io/gcp-service-account' in object.metadata.annotations
+              && object.metadata.annotations['iam.gke.io/gcp-service-account'].matches('^[^@]+@[^@]+\\.iam\\.gserviceaccount\\.com$'))
+            || (has(object.metadata.labels) && 'workload-identity' in object.metadata.labels
+              && object.metadata.labels['workload-identity'] == 'enabled')
+          message: ServiceAccounts must declare iam.gke.io/gcp-service-account=<gsa>@<project>.iam.gserviceaccount.com
+            (GKE Workload Identity). Namespaces may opt in with workload-identity=enabled.

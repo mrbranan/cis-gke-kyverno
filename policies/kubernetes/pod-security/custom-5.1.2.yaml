@@ -4,7 +4,7 @@ metadata:
   name: custom-5.1.2
   annotations:
     policies.kyverno.io/category: CIS 5.1.2
-    policies.kyverno.io/description: 'Checks for ECR access annotation or label in
+    policies.kyverno.io/description: 'Checks for Artifact Registry access annotation or label in
       ServiceAccount or Namespace if available.
 
       '
@@ -13,7 +13,7 @@ spec:
   validationFailureAction: Audit
   background: true
   rules:
-  - name: check-minimize-ecr-access
+  - name: check-minimize-artifact-registry-access
     match:
       any:
       - resources:
@@ -21,12 +21,12 @@ spec:
           - ServiceAccount
           - Namespace
     validate:
-      message: ECR access should be minimized (look for ecr-access annotation or label).
+      message: Artifact Registry access should be minimized (look for artifact-registry-access annotation or label).
       cel:
         expressions:
-        - expression: (has(object.metadata.annotations) && "ecr-access" in object.metadata.annotations
-            && (object.metadata.annotations["ecr-access"] == 'read-only')) || (has(object.metadata.labels)
-            && "ecr-access" in object.metadata.labels && (object.metadata.labels["ecr-access"]
+        - expression: (has(object.metadata.annotations) && "artifact-registry-access" in object.metadata.annotations
+            && (object.metadata.annotations["artifact-registry-access"] == 'read-only')) || (has(object.metadata.labels)
+            && "artifact-registry-access" in object.metadata.labels && (object.metadata.labels["artifact-registry-access"]
             == 'read-only'))
-          message: ECR access should be minimized (look for ecr-access annotation
+          message: Artifact Registry access should be minimized (look for artifact-registry-access annotation
             or label).

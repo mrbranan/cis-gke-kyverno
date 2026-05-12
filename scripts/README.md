@@ -1,6 +1,6 @@
 # Scripts Directory
 
-This directory contains utility scripts for testing and managing the CIS EKS Kyverno policies.
+This directory contains utility scripts for testing and managing the CIS GKE Kyverno policies.
 
 ## Scripts
 
@@ -21,7 +21,6 @@ Integration test script that creates a Kind cluster and tests policies in a real
 - Applies all policies to the cluster
 - Tests policy enforcement with sample resources
 - Can skip cluster creation with `--skip-create` flag
-
 
 ### generate-summary-report.sh
 Generates an executive summary report from all test results.
@@ -57,7 +56,7 @@ Utility script to destroy OpenTofu infrastructure resources.
 
 ## CI/CD Integration
 
-The GitHub Actions workflow "Comprehensive CIS EKS Compliance Tests" uses:
+The GitHub Actions workflow "Comprehensive CIS GKE Compliance Tests" uses:
 - `test-kubernetes-policies.sh` for unit tests (includes OpenTofu policies)
 - `test-opentofu-policies.sh` for dedicated OpenTofu compliance testing
 - `test-kind-cluster.sh` for integration testing with a real Kubernetes cluster
@@ -66,7 +65,6 @@ The GitHub Actions workflow "Comprehensive CIS EKS Compliance Tests" uses:
 The workflow runs on:
 - Push to main and develop branches
 - Pull requests to main
-- Daily schedule (2 AM UTC)
 - Manual dispatch via GitHub Actions UI
 
 ### Test Requirements

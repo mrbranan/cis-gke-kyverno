@@ -1,16 +1,16 @@
 # Test Framework
 
-This directory contains comprehensive test cases for validating CIS EKS compliance policies using Kyverno.
+This directory contains comprehensive test cases for validating CIS GKE compliance policies using Kyverno.
 
 ## Test Structure
 
 ### 📋 Test Scenarios
 
-The test suite includes **62 test scenarios** organized by CIS EKS Benchmark control numbers:
+The test suite includes per-policy test scenarios organized by CIS GKE Benchmark control numbers:
 
 #### Control Plane (Section 2)
-- `custom-2.1.1/` - API server configuration
-- `custom-2.1.2/` - API server audit settings
+- `custom-2.1.1/` - API server audit logging
+- `custom-2.1.2/` - API server audit log destinations
 
 #### Worker Nodes (Section 3)
 - `custom-3.1.1/` to `custom-3.1.4/` - Worker node configuration files
@@ -24,11 +24,12 @@ The test suite includes **62 test scenarios** organized by CIS EKS Benchmark con
 - `supported-4.1.1/` to `supported-4.1.6/` - Core RBAC policies
 - `supported-4.2.1/` to `supported-4.2.4/` - Pod security RBAC
 
-#### Pod Security (Section 5)
-- `custom-5.1.1/` to `custom-5.1.3/` - Pod security standards
-- `custom-5.3.1/` - Encryption requirements
-- `custom-5.4.1/` to `custom-5.4.5/` - Network security
-- `custom-5.5.1/` - Service account configuration
+#### Pod Security and GKE Managed Services (Section 5)
+- `custom-5.1.1/` to `custom-5.1.3/` - Image registry and pod security standards
+- `custom-5.2.1/` - Workload Identity validation
+- `custom-5.3.1/` - Cloud KMS application-secrets encryption
+- `custom-5.6.4/`, `custom-5.6.5/` - Private endpoint / private nodes
+- `custom-5.4.3/`, `custom-5.4.5/` - Cluster networking restrictions
 
 ### 🏗️ Test Organization
 
@@ -75,12 +76,8 @@ kyverno apply policies/kubernetes/pod-security/ --resource tests/kubernetes/cust
 
 ### Integration with CI/CD
 
-The test framework is integrated into GitHub Actions workflow:
-<<<<<<< HEAD
-- Validates all 62 policies against test scenarios
-=======
-- Validates all 45 policies against 40 test scenarios
->>>>>>> origin/main
+The test framework is integrated into the GitHub Actions workflow:
+- Validates every policy against per-policy test scenarios
 - Generates detailed compliance reports
 - Runs end-to-end testing with Kind clusters
 
@@ -92,11 +89,6 @@ The test framework is integrated into GitHub Actions workflow:
 | Worker Nodes | 13 | 13 | 100% |
 | RBAC | 20 | 20 | 100% |
 | Pod Security | 9 | 9 | 100% |
-<<<<<<< HEAD
-| **Total** | **62** | **62** | **100%** |
-=======
-| **Total** | **40** | **45** | **89%** |
->>>>>>> origin/main
 
 *Note: Some policies cover multiple CIS controls, resulting in higher policy count than test scenarios.*
 

@@ -523,7 +523,7 @@ This validation combines:
 The SINGLE-TOOL APPROACH provides:
 - Unified deployment via DaemonSet
 - ConfigMap-based result storage
-- Comprehensive CIS EKS compliance coverage across all layers
+- Comprehensive CIS GKE compliance coverage across all layers
 EOF
     
     # Cleanup

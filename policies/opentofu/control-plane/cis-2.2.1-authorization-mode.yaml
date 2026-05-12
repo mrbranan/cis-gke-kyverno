@@ -4,19 +4,21 @@ metadata:
   name: cis-2-2-1-authorization-mode
 spec:
   rules:
-    - name: eks-rbac-authorization
+    - name: gke-rbac-authorization
       assert:
         all:
-          - message: "EKS cluster must be configured with proper IAM role for RBAC authorization."
+          - message: "GKE cluster must have enable_legacy_abac=false to enforce RBAC."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_eks_cluster' && values.role_arn != null]) > `0` || length(configuration.root_module.resources[?type=='aws_eks_cluster' && expressions.role_arn]) > `0`)": true
-          - message: "EKS cluster role must have AmazonEKSClusterPolicy attached for RBAC functionality."
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && values.enable_legacy_abac == `true`]) == `0`): true
+
+          - message: "GKE cluster master_auth.client_certificate_config.issue_client_certificate must be false (legacy client-cert auth bypasses RBAC)."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy_attachment' && contains(values.policy_arn, 'AmazonEKSClusterPolicy')]) > `0`)": true
-          - message: "IAM roles should not have wildcard (*) actions that bypass RBAC controls."
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.master_auth) > `0` && length(values.master_auth[0].client_certificate_config) > `0` && values.master_auth[0].client_certificate_config[0].issue_client_certificate == `true`]) == `0`): true
+
+          - message: "Custom IAM roles must not declare wildcard ('*') permissions."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && contains(values.policy, '\"Action\":\"*\"')]) == `0`)": true
-          - message: "IAM roles should not have overly permissive inline policies that could bypass RBAC."
+              (length(planned_values.root_module.resources[?type=='google_project_iam_custom_role' && contains(values.permissions, '*')]) == `0`): true
+
+          - message: "Cluster identities (service accounts) must not be granted roles/owner at the project level."
             check:
-              # Allow legitimate uses of Resource:* but block dangerous combinations
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && contains(values.policy, '\"Resource\":\"*\"') && contains(values.policy, '\"Action\":\"*\"')]) == `0`)": true
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/owner']) == `0`): true

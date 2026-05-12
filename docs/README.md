@@ -1,13 +1,11 @@
 # Documentation
 
-This directory contains official documentation and compliance benchmarks for the CIS EKS Kyverno Compliance Framework.
+This directory contains documentation and supporting material for the CIS GKE Kyverno Compliance Framework.
 
 ## 📚 Available Documentation
 
-
-
 ### Visual Documentation
-- **images/** - Diagrams and screenshots supporting the documentation
+- **diagrams/** - Architecture diagrams supporting the documentation
 
 ## 🚀 Getting Started
 
@@ -19,18 +17,12 @@ This directory contains official documentation and compliance benchmarks for the
 
 ## 🏗️ Framework Components
 
-- **Policies**: 62 Kyverno policies organized by CIS control sections
-- **Tests**: 62 test scenarios for comprehensive validation
-- **Scripts**: 5 automation tools for testing and reporting
-- **OpenTofu**: Example configurations for compliant and non-compliant clusters
-- **Kube-bench**: CIS node-level compliance scanning integration
+- **Policies**: Kyverno policies organized by CIS control sections (Kubernetes runtime + OpenTofu plan-time)
+- **Tests**: Per-policy compliant/noncompliant test scenarios
+- **Scripts**: Automation tools for testing and reporting
+- **OpenTofu**: Example configurations for compliant and non-compliant GKE clusters
+- **Custom CIS Scanner**: DaemonSet that performs node-level filesystem and kubelet checks (GKE Standard only)
 
-## 📋 CIS EKS Benchmark Reference
+## 📋 CIS GKE Benchmark Reference
 
-The included CIS benchmark PDF serves as the authoritative reference for:
-- Control definitions and requirements
-- Scoring methodology
-- Remediation procedures
-- Compliance assessment criteria
-
-This framework implements automated validation for the majority of applicable CIS EKS controls using Kyverno policies and kube-bench scanning.
+The framework implements automated validation for the majority of applicable CIS GKE Benchmark v1.6.0 controls using Kyverno policies and the included node scanner. See [`../CIS_GKE_Benchmark_v1.6.0.md`](../CIS_GKE_Benchmark_v1.6.0.md) for the section-by-section alignment summary.

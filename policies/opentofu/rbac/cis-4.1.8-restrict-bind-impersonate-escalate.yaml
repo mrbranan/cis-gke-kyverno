@@ -7,9 +7,14 @@ spec:
     - name: no-privilege-escalation-iam
       assert:
         all:
-          - message: "IAM policies should not allow privilege escalation through sts:AssumeRole on wildcard resources."
+          - message: "roles/iam.serviceAccountTokenCreator must not be granted to broad principals (it permits service-account impersonation)."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && (contains(values.policy, '\"sts:AssumeRole\"') || contains(values.policy, '\"sts:*\"') || contains(values.policy, '\"Action\":\"*\"'))]) == `0`)": true
-          - message: "IAM roles should not have iam:PassRole permissions on wildcard resources."
+              (length(planned_values.root_module.resources[?type=='google_service_account_iam_member' && values.role == 'roles/iam.serviceAccountTokenCreator' && (values.member == 'allUsers' || values.member == 'allAuthenticatedUsers')]) == `0`): true
+
+          - message: "roles/iam.serviceAccountUser must not be granted to broad principals (it permits actAs on the SA)."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && (contains(values.policy, '\"iam:PassRole\"') || contains(values.policy, '\"iam:*\"') || contains(values.policy, '\"Action\":\"*\"'))]) == `0`)": true
+              (length(planned_values.root_module.resources[?type=='google_service_account_iam_member' && values.role == 'roles/iam.serviceAccountUser' && (values.member == 'allUsers' || values.member == 'allAuthenticatedUsers')]) == `0`): true
+
+          - message: "Custom IAM roles must not include iam.serviceAccounts.actAs or wildcard iam.* permissions."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_project_iam_custom_role' && (contains(values.permissions, 'iam.serviceAccounts.actAs') || contains(values.permissions, 'iam.*') || contains(values.permissions, '*'))]) == `0`): true

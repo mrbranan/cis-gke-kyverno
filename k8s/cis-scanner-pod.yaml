@@ -1,3 +1,16 @@
+# Custom CIS Scanner DaemonSet for GKE Standard clusters.
+#
+# Compatibility:
+#   - GKE Standard (Container-Optimized OS / Ubuntu containerd node images): SUPPORTED.
+#     Kubelet config paths probed in order:
+#       /var/lib/kubelet/config.yaml
+#       /home/kubernetes/kubelet-config.yaml   (Container-Optimized OS)
+#       /etc/kubernetes/kubelet/kubelet-config.json
+#   - GKE Autopilot: NOT SUPPORTED. Autopilot rejects privileged pods and
+#     hostPath mounts, so this DaemonSet cannot be admitted. For Autopilot
+#     clusters, treat the CIS GKE Section 3 (worker-node) controls as managed
+#     by Google's platform attestation and rely on the Kyverno runtime
+#     + OpenTofu plan-time policy layers only.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -35,62 +48,91 @@ data:
   scan-cis.sh: |
     #!/bin/bash
     set -e
-    
+
     NODE_NAME=${NODE_NAME:-$(hostname)}
     OUTPUT_FILE="/tmp/cis-scan-results.json"
-    
-    echo "Starting CIS compliance scan on node: $NODE_NAME"
-    
-    # Function to check file permissions
+
+    echo "Starting CIS GKE compliance scan on node: $NODE_NAME"
+
+    # Function to check file permissions.
     check_file_permissions() {
         local file_path="$1"
         local expected_perm="$2"
         local description="$3"
-        
+
         if [ -f "$file_path" ]; then
             actual_perm=$(stat -c "%a" "$file_path" 2>/dev/null)
             owner=$(stat -c "%U:%G" "$file_path" 2>/dev/null)
-            
-            # Check if actual permissions are equal or more restrictive
+
             if [ "$actual_perm" -le "$expected_perm" ] 2>/dev/null; then
                 compliant=true
             else
                 compliant=false
             fi
-            
+
             echo "    {\"path\":\"$file_path\",\"expected\":\"$expected_perm\",\"actual\":\"$actual_perm\",\"owner\":\"$owner\",\"compliant\":$compliant,\"description\":\"$description\"}"
         else
             echo "    {\"path\":\"$file_path\",\"expected\":\"$expected_perm\",\"actual\":\"N/A\",\"owner\":\"N/A\",\"compliant\":false,\"error\":\"File not found\",\"description\":\"$description\"}"
         fi
     }
-    
-    # Function to check kubelet configuration
+
+    # Resolve the kubelet config path across GKE node images.
+    # Container-Optimized OS stores it under /home/kubernetes/kubelet-config.yaml;
+    # Ubuntu nodes commonly use /var/lib/kubelet/config.yaml or
+    # /etc/kubernetes/kubelet/kubelet-config.json.
+    resolve_kubelet_config() {
+        for candidate in \
+            "/var/lib/kubelet/config.yaml" \
+            "/home/kubernetes/kubelet-config.yaml" \
+            "/etc/kubernetes/kubelet/kubelet-config.json"; do
+            if [ -f "$candidate" ]; then
+                echo "$candidate"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    # Function to check kubelet configuration.
     check_kubelet_config() {
-        local config_file="/var/lib/kubelet/config.yaml"
-        
-        if [ -f "$config_file" ]; then
-            # Check if anonymous authentication is disabled
-            anonymous_enabled=$(grep -i "enabled.*false" "$config_file" | grep -i anonymous || echo "")
-            webhook_enabled=$(grep -i "enabled.*true" "$config_file" | grep -i webhook || echo "")
-            
-            anonymous_compliant=false
-            webhook_compliant=false
-            
-            if [ -n "$anonymous_enabled" ]; then
-                anonymous_compliant=true
-            fi
-            
-            if [ -n "$webhook_enabled" ]; then
-                webhook_compliant=true
-            fi
-            
-            echo "    {\"config_file\":\"$config_file\",\"anonymous_auth_disabled\":$anonymous_compliant,\"webhook_auth_enabled\":$webhook_compliant,\"compliant\":$([ "$anonymous_compliant" = "true" ] && echo true || echo false)}"
+        local config_file
+        if ! config_file=$(resolve_kubelet_config); then
+            echo "    {\"config_file\":\"<none>\",\"error\":\"Kubelet config file not found on any known GKE path\",\"compliant\":false}"
+            return
+        fi
+
+        anonymous_enabled=$(grep -i "enabled.*false" "$config_file" | grep -i anonymous || echo "")
+        webhook_enabled=$(grep -i "enabled.*true" "$config_file" | grep -i webhook || echo "")
+
+        anonymous_compliant=false
+        webhook_compliant=false
+
+        if [ -n "$anonymous_enabled" ]; then
+            anonymous_compliant=true
+        fi
+
+        if [ -n "$webhook_enabled" ]; then
+            webhook_compliant=true
+        fi
+
+        echo "    {\"config_file\":\"$config_file\",\"anonymous_auth_disabled\":$anonymous_compliant,\"webhook_auth_enabled\":$webhook_compliant,\"compliant\":$([ "$anonymous_compliant" = "true" ] && echo true || echo false)}"
+    }
+
+    # CIS GKE 5.4.1 — GKE Metadata Server enforced (workload identity node label).
+    check_gke_metadata_server() {
+        # The DaemonSet has cluster-scoped get on nodes; use kubectl to verify the
+        # node-level label set by GKE when GKE_METADATA mode is in effect.
+        labels=$(kubectl get node "$NODE_NAME" -o jsonpath='{.metadata.labels}' 2>/dev/null || echo "")
+        if echo "$labels" | grep -q 'iam.gke.io/gke-metadata-server-enabled":"true"'; then
+            echo "PASS"
         else
-            echo "    {\"config_file\":\"$config_file\",\"error\":\"Config file not found\",\"compliant\":false}"
+            echo "FAIL"
         fi
     }
-    
-    # Generate JSON report
+
+    KUBELET_CONFIG_PATH=$(resolve_kubelet_config || echo "/var/lib/kubelet/config.yaml")
+
+    # Generate JSON report.
     cat > "$OUTPUT_FILE" <<EOF
     {
       "node": "$NODE_NAME",
@@ -101,22 +143,22 @@ data:
         {
           "id": "3.1.1",
           "description": "Ensure that the kubeconfig file permissions are set to 644 or more restrictive",
-          "status": "$(check_file_permissions "/etc/kubernetes/kubelet.conf" "644" "kubelet kubeconfig file" > /dev/null && echo "PASS" || echo "FAIL")"
+          "status": "$(check_file_permissions "/var/lib/kubelet/kubeconfig" "644" "kubelet kubeconfig file" > /dev/null && echo "PASS" || echo "FAIL")"
         },
         {
-          "id": "3.1.2", 
+          "id": "3.1.2",
           "description": "Ensure that the kubelet kubeconfig file ownership is set to root:root",
-          "status": "$(check_file_permissions "/etc/kubernetes/kubelet.conf" "644" "kubelet kubeconfig ownership" > /dev/null && echo "PASS" || echo "FAIL")"
+          "status": "$(check_file_permissions "/var/lib/kubelet/kubeconfig" "644" "kubelet kubeconfig ownership" > /dev/null && echo "PASS" || echo "FAIL")"
         },
         {
           "id": "3.1.3",
-          "description": "Ensure that the kubelet configuration file has permissions of 644 or more restrictive", 
-          "status": "$(check_file_permissions "/var/lib/kubelet/config.yaml" "644" "kubelet config file" > /dev/null && echo "PASS" || echo "FAIL")"
+          "description": "Ensure that the kubelet configuration file has permissions of 644 or more restrictive",
+          "status": "$(check_file_permissions "$KUBELET_CONFIG_PATH" "644" "kubelet config file" > /dev/null && echo "PASS" || echo "FAIL")"
         },
         {
           "id": "3.1.4",
           "description": "Ensure that the kubelet configuration file ownership is set to root:root",
-          "status": "$(check_file_permissions "/var/lib/kubelet/config.yaml" "644" "kubelet config ownership" > /dev/null && echo "PASS" || echo "FAIL")"
+          "status": "$(check_file_permissions "$KUBELET_CONFIG_PATH" "644" "kubelet config ownership" > /dev/null && echo "PASS" || echo "FAIL")"
         },
         {
           "id": "3.2.1",
@@ -125,7 +167,7 @@ data:
         },
         {
           "id": "3.2.2",
-          "description": "Ensure that the --authorization-mode argument is not set to AlwaysAllow", 
+          "description": "Ensure that the --authorization-mode argument is not set to AlwaysAllow",
           "status": "PASS"
         },
         {
@@ -134,7 +176,7 @@ data:
           "status": "PASS"
         },
         {
-          "id": "3.2.4", 
+          "id": "3.2.4",
           "description": "Ensure that the --read-only-port argument is set to 0",
           "status": "PASS"
         },
@@ -162,22 +204,27 @@ data:
           "id": "3.2.9",
           "description": "Ensure that the --event-qps argument is set to 0 or a level which ensures appropriate event capture",
           "status": "PASS"
+        },
+        {
+          "id": "5.4.1",
+          "description": "Ensure the GKE Metadata Server is Enabled on every node pool",
+          "status": "$(check_gke_metadata_server)"
         }
       ]
     }
     EOF
-    
-    echo "CIS scan completed. Results saved to $OUTPUT_FILE"
-    
-    # Create/update Kubernetes ConfigMap with results
+
+    echo "CIS GKE scan completed. Results saved to $OUTPUT_FILE"
+
+    # Create/update Kubernetes ConfigMap with results.
     kubectl create configmap "cis-scanner-results-$NODE_NAME" \
       --from-file="node-results.json=$OUTPUT_FILE" \
       --namespace=kube-system \
       --dry-run=client -o yaml | kubectl apply -f -
-    
+
     echo "Results uploaded to ConfigMap: cis-scanner-results-$NODE_NAME"
-    
-    # Keep pod running for debugging if needed
+
+    # Keep pod running for debugging if needed.
     sleep 300
 ---
 apiVersion: apps/v1
@@ -220,6 +267,9 @@ spec:
         - name: kubernetes-config
           mountPath: /etc/kubernetes
           readOnly: true
+        - name: cos-kubelet-config
+          mountPath: /home/kubernetes
+          readOnly: true
         resources:
           requests:
             memory: "64Mi"
@@ -238,6 +288,10 @@ spec:
       - name: kubernetes-config
         hostPath:
           path: /etc/kubernetes
+      - name: cos-kubelet-config
+        hostPath:
+          path: /home/kubernetes
+          type: DirectoryOrCreate
       tolerations:
       - operator: Exists
         effect: NoSchedule

@@ -1,483 +1,344 @@
-provider "aws" {
-  region = var.region
-}
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.main.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.main.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.main.token
-}
-
-resource "aws_vpc" "main" {
-  cidr_block           = var.vpc_cidr
-  enable_dns_support   = true
-  enable_dns_hostnames = true
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 5.0"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.0"
+    }
   }
 }
 
-resource "aws_subnet" "private" {
-  count             = length(var.private_subnets)
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.private_subnets[count.index]
-  availability_zone = element(["${var.region}a", "${var.region}b", "${var.region}c"], count.index)
-  tags = {
-    "kubernetes.io/cluster/${var.cluster_name}" = "owned"
-    "kubernetes.io/role/internal-elb" = "1"
-    Environment = "production"
-    Owner       = "platform-team"
+provider "google" {
+  project = var.project_id
+  region  = var.region
+}
+
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
+}
+
+locals {
+  common_labels = {
+    environment = "production"
+    owner       = "platform-team"
   }
 }
 
-# Custom Network ACL for CIS 5.1.2-nacl-configuration
-resource "aws_network_acl" "custom" {
-  vpc_id = aws_vpc.main.id
-  subnet_ids = aws_subnet.private[*].id
+# ----------------------------------------------------------------------------
+# Networking — VPC-native (CIS 5.6.2), private firewall posture (CIS 5.6.1)
+# ----------------------------------------------------------------------------
 
-  # Ingress rules
-  ingress {
-    protocol   = "tcp"
-    rule_no    = 100
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 443
-    to_port    = 443
+resource "google_compute_network" "main" {
+  name                    = "${var.cluster_name}-vpc"
+  auto_create_subnetworks = false
+  routing_mode            = "REGIONAL"
+}
+
+resource "google_compute_subnetwork" "private" {
+  name                     = "${var.cluster_name}-subnet"
+  ip_cidr_range            = var.vpc_cidr
+  region                   = var.region
+  network                  = google_compute_network.main.id
+  private_ip_google_access = true
+
+  secondary_ip_range {
+    range_name    = "pods"
+    ip_cidr_range = var.pods_cidr
   }
 
-  ingress {
-    protocol   = "tcp"
-    rule_no    = 110
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 10250
-    to_port    = 10250
-  }
-
-  ingress {
-    protocol   = "tcp"
-    rule_no    = 120
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 53
-    to_port    = 53
-  }
-
-  ingress {
-    protocol   = "udp"
-    rule_no    = 130
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 53
-    to_port    = 53
-  }
-
-  ingress {
-    protocol   = "tcp"
-    rule_no    = 140
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 1024
-    to_port    = 65535
-  }
-
-  # Egress rules
-  egress {
-    protocol   = "tcp"
-    rule_no    = 100
-    action     = "allow"
-    cidr_block = "0.0.0.0/0"
-    from_port  = 443
-    to_port    = 443
-  }
-
-  egress {
-    protocol   = "tcp"
-    rule_no    = 110
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 0
-    to_port    = 65535
-  }
-
-  egress {
-    protocol   = "udp"
-    rule_no    = 120
-    action     = "allow"
-    cidr_block = var.vpc_cidr
-    from_port  = 0
-    to_port    = 65535
-  }
-
-  egress {
-    protocol   = "tcp"
-    rule_no    = 130
-    action     = "allow"
-    cidr_block = "0.0.0.0/0"
-    from_port  = 80
-    to_port    = 80
-  }
-
-  tags = {
-    Name        = "${var.cluster_name}-custom-nacl"
-    Environment = "production"
-    Owner       = "platform-team"
+  secondary_ip_range {
+    range_name    = "services"
+    ip_cidr_range = var.services_cidr
   }
 }
 
-resource "aws_security_group" "nodes" {
-  name        = "${var.cluster_name}-nodes"
-  description = "Node group security group"
-  vpc_id      = aws_vpc.main.id
+resource "google_compute_firewall" "allow_internal" {
+  name    = "${var.cluster_name}-allow-internal"
+  network = google_compute_network.main.id
+  direction = "INGRESS"
 
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+  source_ranges = [var.vpc_cidr, var.pods_cidr]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["443", "10250", "53"]
   }
 
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    self        = true
-  }
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
+  allow {
+    protocol = "udp"
+    ports    = ["53"]
   }
 }
 
-resource "aws_kms_key" "eks" {
-  description             = "EKS Secret Encryption Key"
-  deletion_window_in_days = 7
-  enable_key_rotation     = true
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
+# ----------------------------------------------------------------------------
+# Cloud KMS — application-layer secrets encryption (CIS 5.10.1, 5.3.x)
+# ----------------------------------------------------------------------------
+
+resource "google_kms_key_ring" "gke" {
+  name     = "${var.cluster_name}-keyring"
+  location = var.region
+}
+
+resource "google_kms_crypto_key" "gke_secrets" {
+  name            = "${var.cluster_name}-gke-secrets"
+  key_ring        = google_kms_key_ring.gke.id
+  rotation_period = "7776000s" # 90 days
+
+  labels = local.common_labels
+
+  lifecycle {
+    prevent_destroy = false
   }
 }
 
-resource "aws_iam_role" "eks" {
-  name = "cis-eks-compliant-eks-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Principal = {
-          Service = "eks.amazonaws.com"
-        },
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
+# ----------------------------------------------------------------------------
+# Service accounts — dedicated node-pool SA + Workload Identity (CIS 5.2.1, 5.8.1)
+# ----------------------------------------------------------------------------
+
+resource "google_service_account" "gke_nodes" {
+  account_id   = "${var.cluster_name}-nodes"
+  display_name = "GKE Node Pool Service Account (least-privilege)"
 }
 
-# IAM role for EKS authentication (CIS 5.5.1-iam-authenticator and CIS 2.2.1-authorization-mode)
-resource "aws_iam_role" "eks_auth" {
-  name = "${var.cluster_name}-eks-auth-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Principal = {
-          AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
-        },
-        Action = "sts:AssumeRole"
-      }
-    ]
-  })
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-    Purpose     = "EKS IAM Authentication"
-  }
+# Least-privilege role bindings for the node-pool SA — CIS 4.1.4 / 5.1.2
+resource "google_project_iam_member" "node_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
-# Data source for current AWS account
-data "aws_caller_identity" "current" {}
-
-resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role       = aws_iam_role.eks.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+resource "google_project_iam_member" "node_metric_writer" {
+  project = var.project_id
+  role    = "roles/monitoring.metricWriter"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
-# CIS 4.1.3 compliant policy - specific permissions only
-resource "aws_iam_role_policy" "compliant_eks_logging_policy" {
-  name = "eks-logging-policy"
-  role = aws_iam_role.eks.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = [
-          "arn:aws:logs:${var.region}:*:log-group:/aws/eks/${var.cluster_name}/*"
-        ]
-      }
-    ]
-  })
+resource "google_project_iam_member" "node_monitoring_viewer" {
+  project = var.project_id
+  role    = "roles/monitoring.viewer"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
-resource "aws_iam_role" "eks_node_group" {
-  name = "${var.cluster_name}-node-group-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
+resource "google_project_iam_member" "node_resource_metadata_writer" {
+  project = var.project_id
+  role    = "roles/stackdriver.resourceMetadata.writer"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
-resource "aws_iam_role_policy_attachment" "eks_worker_node" {
-  role       = aws_iam_role.eks_node_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-}
-resource "aws_iam_role_policy_attachment" "eks_cni" {
-  role       = aws_iam_role.eks_node_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-}
-resource "aws_iam_role_policy_attachment" "ec2_container_registry" {
-  role       = aws_iam_role.eks_node_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+resource "google_project_iam_member" "node_artifact_registry_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
 }
 
-# Explicit ECR read-only policy for CIS 5.1.2-ecr-access-minimization
-resource "aws_iam_role_policy" "ecr_read_only" {
-  name = "${var.cluster_name}-ecr-read-only"
-  role = aws_iam_role.eks_node_group.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:DescribeRepositories",
-          "ecr:ListImages",
-          "ecr:DescribeImages"
-        ]
-        Resource = "arn:aws:ecr:${var.region}:${data.aws_caller_identity.current.account_id}:repository/*"
-      }
-    ]
-  })
+# Workload Identity workload SA (impersonated by a KSA in-cluster) — CIS 5.8.1
+resource "google_service_account" "workload" {
+  account_id   = "${var.cluster_name}-workload"
+  display_name = "Application Workload Identity Service Account"
 }
 
-resource "aws_eks_cluster" "main" {
+resource "google_service_account_iam_member" "workload_identity_binding" {
+  service_account_id = google_service_account.workload.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[default/app]"
+}
+
+# ----------------------------------------------------------------------------
+# GKE cluster — private, encrypted, audit-logged, Workload-Identity-enabled
+# ----------------------------------------------------------------------------
+
+resource "google_container_cluster" "main" {
+  provider = google-beta
+
   name     = var.cluster_name
-  role_arn = aws_iam_role.eks.arn
-  version  = var.cluster_version
+  location = var.region
 
-  vpc_config {
-    subnet_ids              = aws_subnet.private[*].id
-    endpoint_private_access = true
-    endpoint_public_access  = false
+  network    = google_compute_network.main.id
+  subnetwork = google_compute_subnetwork.private.id
+
+  remove_default_node_pool = true
+  initial_node_count       = 1
+
+  enable_legacy_abac = false
+
+  ip_allocation_policy {
+    cluster_secondary_range_name  = "pods"
+    services_secondary_range_name = "services"
   }
 
-  enabled_cluster_log_types = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
-
-  kubernetes_network_config {
-    service_ipv4_cidr = "10.100.0.0/16"
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = true
+    master_ipv4_cidr_block  = "172.16.0.0/28"
   }
 
-  encryption_config {
-    resources = ["secrets"]
-    provider {
-      key_arn = aws_kms_key.eks.arn
+  master_authorized_networks_config {
+    cidr_blocks {
+      cidr_block   = "10.0.0.0/8"
+      display_name = "internal"
     }
   }
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
+
+  workload_identity_config {
+    workload_pool = "${var.project_id}.svc.id.goog"
+  }
+
+  database_encryption {
+    state    = "ENCRYPTED"
+    key_name = google_kms_crypto_key.gke_secrets.id
+  }
+
+  logging_config {
+    enable_components = ["SYSTEM_COMPONENTS", "WORKLOADS", "API_SERVER"]
+  }
+
+  monitoring_config {
+    enable_components = ["SYSTEM_COMPONENTS"]
+  }
+
+  network_policy {
+    enabled  = true
+    provider = "CALICO"
+  }
+
+  addons_config {
+    network_policy_config {
+      disabled = false
+    }
+  }
+
+  binary_authorization {
+    evaluation_mode = "PROJECT_SINGLETON_POLICY_ENFORCE"
+  }
+
+  release_channel {
+    channel = "REGULAR"
+  }
+
+  master_auth {
+    client_certificate_config {
+      issue_client_certificate = false
+    }
+  }
+
+  resource_labels = local.common_labels
+}
+
+resource "google_container_node_pool" "main" {
+  provider = google-beta
+
+  name     = "${var.cluster_name}-pool"
+  location = var.region
+  cluster  = google_container_cluster.main.name
+
+  autoscaling {
+    min_node_count = var.min_size
+    max_node_count = var.max_size
+  }
+
+  initial_node_count = var.desired_capacity
+
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+
+  node_config {
+    machine_type    = var.node_machine_type
+    service_account = google_service_account.gke_nodes.email
+    image_type      = "COS_CONTAINERD"
+
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform",
+    ]
+
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+
+    labels = local.common_labels
   }
 }
 
-data "aws_eks_cluster" "main" {
-  name = aws_eks_cluster.main.name
+# ----------------------------------------------------------------------------
+# Artifact Registry + Container Analysis — CIS 5.1.1
+# ----------------------------------------------------------------------------
+
+resource "google_artifact_registry_repository" "app" {
+  location      = var.region
+  repository_id = "${var.cluster_name}-app"
+  description   = "Container images for the GKE cluster"
+  format        = "DOCKER"
+  mode          = "STANDARD_REPOSITORY"
+
+  labels = local.common_labels
 }
 
-data "aws_eks_cluster_auth" "main" {
-  name = aws_eks_cluster.main.name
+resource "google_project_service" "containeranalysis" {
+  project            = var.project_id
+  service            = "containeranalysis.googleapis.com"
+  disable_on_destroy = false
 }
 
-# Launch template for CIS-compliant node configuration
-resource "aws_launch_template" "cis_compliant_nodes" {
-  name_prefix   = "${var.cluster_name}-cis-compliant-"
-  instance_type = var.node_instance_type
-  
-  vpc_security_group_ids = [aws_security_group.nodes.id]
-  
-  # User data script for CIS compliance configuration
-  user_data = base64encode(<<-EOF
-    #!/bin/bash
-    
-    # CIS 3.1.1: Set kubeconfig file permissions to 644 or more restrictive
-    echo "Configuring CIS-compliant file permissions..."
-    
-    # Create kubelet configuration directory
-    mkdir -p /etc/kubernetes/kubelet
-    
-    # Configure kubelet with CIS-compliant settings for 3.2.1
-    cat <<KUBELET_CONFIG > /etc/kubernetes/kubelet/kubelet-config.json
-    {
-      "kind": "KubeletConfiguration",
-      "apiVersion": "kubelet.config.k8s.io/v1beta1",
-      "authentication": {
-        "anonymous": {
-          "enabled": false
-        },
-        "webhook": {
-          "enabled": true
+# ----------------------------------------------------------------------------
+# Secret Manager — CMEK-replicated secrets (CIS 5.3.2)
+# ----------------------------------------------------------------------------
+
+resource "google_secret_manager_secret" "app_secrets" {
+  secret_id = "${var.cluster_name}-app-secrets"
+
+  replication {
+    user_managed {
+      replicas {
+        location = var.region
+        customer_managed_encryption {
+          kms_key_name = google_kms_crypto_key.gke_secrets.id
         }
-      },
-      "authorization": {
-        "mode": "Webhook"
       }
     }
-KUBELET_CONFIG
-    
-    # Set CIS-compliant file permissions
-    chmod 644 /etc/kubernetes/kubelet/kubelet-config.json
-    chown root:root /etc/kubernetes/kubelet/kubelet-config.json
-    
-    # Bootstrap EKS node with CIS-compliant kubelet settings
-    /etc/eks/bootstrap.sh ${var.cluster_name} \
-      --kubelet-extra-args "--config=/etc/kubernetes/kubelet/kubelet-config.json --anonymous-auth=false"
-    
-    # Ensure kubeconfig files have proper permissions after bootstrap
-    chmod 644 /etc/kubernetes/kubelet.conf 2>/dev/null || true
-    chown root:root /etc/kubernetes/kubelet.conf 2>/dev/null || true
-    
-    echo "CIS compliance configuration completed"
-  EOF
-  )
-  
-  tag_specifications {
-    resource_type = "instance"
-    tags = {
-      Name = "${var.cluster_name}-cis-compliant-node"
-      Environment = "production"
-      Owner = "platform-team"
-    }
   }
+
+  labels = local.common_labels
 }
 
-resource "aws_eks_node_group" "main" {
-  cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "compliant-ng"
-  node_role_arn   = aws_iam_role.eks_node_group.arn
-  subnet_ids      = aws_subnet.private[*].id
-  capacity_type   = "ON_DEMAND"
-  ami_type        = "AL2_x86_64"  # Specify secure AMI type for CIS 3.1.1
-  
-  # Use launch template for CIS-compliant configuration
-  launch_template {
-    id      = aws_launch_template.cis_compliant_nodes.id
-    version = aws_launch_template.cis_compliant_nodes.latest_version
-  }
-  
-  scaling_config {
-    desired_size = var.desired_capacity
-    min_size     = var.min_size
-    max_size     = min(var.max_size, 100)  # CIS 5.5.1-resource-quotas: max_size must be <= 100
-  }
-  depends_on = [aws_security_group.nodes]
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
+# ----------------------------------------------------------------------------
+# Cloud Logging — centralized audit log routing with retention (CIS 2.1.2/3)
+# ----------------------------------------------------------------------------
+
+resource "google_logging_project_bucket_config" "audit" {
+  project        = var.project_id
+  location       = "global"
+  retention_days = 90
+  bucket_id      = "${var.cluster_name}-audit-logs"
 }
 
-# CloudWatch Log Group for EKS audit logs (CIS 2.1.2, 2.1.3)
-resource "aws_cloudwatch_log_group" "eks_cluster" {
-  name              = "/aws/eks/${var.cluster_name}/cluster"
-  retention_in_days = 90
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
+resource "google_logging_project_sink" "audit" {
+  name                   = "${var.cluster_name}-audit-sink"
+  destination            = "logging.googleapis.com/projects/${var.project_id}/locations/global/buckets/${google_logging_project_bucket_config.audit.bucket_id}"
+  filter                 = "resource.type=k8s_cluster AND resource.labels.cluster_name=\"${var.cluster_name}\""
+  unique_writer_identity = true
 }
 
-# ECR repository with image scanning enabled (CIS 5.1.1)
-resource "aws_ecr_repository" "app" {
-  name                 = "${var.cluster_name}-app"
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
-}
-
-# Secrets Manager secret with KMS encryption (CIS 5.3.2)
-resource "aws_secretsmanager_secret" "app_secrets" {
-  name        = "${var.cluster_name}-app-secrets"
-  description = "Application secrets for EKS cluster"
-  kms_key_id  = aws_kms_key.eks.arn
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
-}
-
-# EKS Add-on for VPC CNI (CIS 4.3.1)
-resource "aws_eks_addon" "vpc_cni" {
-  cluster_name = aws_eks_cluster.main.name
-  addon_name   = "vpc-cni"
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
-}
+# ----------------------------------------------------------------------------
+# Default-deny NetworkPolicy — CIS 5.6.7
+# ----------------------------------------------------------------------------
 
 resource "kubernetes_network_policy" "default_deny_all" {
+  count = var.create_network_policy ? 1 : 0
+
   metadata {
     name      = "default-deny-all"
     namespace = "default"
@@ -487,31 +348,3 @@ resource "kubernetes_network_policy" "default_deny_all" {
     policy_types = ["Ingress", "Egress"]
   }
 }
-
-# Configure IAM identity mapping for EKS authentication
-resource "aws_eks_identity_provider_config" "oidc" {
-  cluster_name = aws_eks_cluster.main.name
-
-  oidc {
-    client_id                     = "sts.amazonaws.com"
-    identity_provider_config_name = "oidc-provider"
-    issuer_url                    = aws_eks_cluster.main.identity[0].oidc[0].issuer
-  }
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
-}
-
-# IAM OIDC provider for EKS
-resource "aws_iam_openid_connect_provider" "eks" {
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
-  url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
-  
-  tags = {
-    Environment = "production"
-    Owner       = "platform-team"
-  }
-} 

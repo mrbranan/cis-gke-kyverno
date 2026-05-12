@@ -2,10 +2,10 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: noncompliant-cm
-  namespace: kyverno-aws
+  namespace: kyverno-gcp
 data:
   logging: |
     clusterLogging:
       - types:
           - api
-        enabled: true 
+        enabled: true

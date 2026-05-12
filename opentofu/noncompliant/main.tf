@@ -1,215 +1,184 @@
-provider "aws" {
-  region = var.region
-}
-
-resource "aws_vpc" "main" {
-  cidr_block = var.vpc_cidr
-  # Missing tags (violates require-tags policy)
-}
-
-resource "aws_subnet" "public" {
-  count             = length(var.public_subnets)
-  vpc_id            = aws_vpc.main.id
-  cidr_block        = var.public_subnets[count.index]
-  availability_zone = element(["${var.region}a", "${var.region}b", "${var.region}c"], count.index)
-  map_public_ip_on_launch = true
-  # Missing tags (violates require-tags policy)
-}
-
-resource "aws_security_group" "nodes" {
-  name        = "${var.cluster_name}-nodes"
-  description = "Node group security group"
-  vpc_id      = aws_vpc.main.id
-
-  # Overly permissive security group rules (violates CIS 5.1.1)
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # SSH from anywhere (violates CIS)
-  }
-
-  ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    self        = true
-  }
-  # Missing tags (violates require-tags policy)
-}
-
-resource "aws_iam_role" "eks" {
-  name = "${var.cluster_name}-eks-role"
-  assume_role_policy = data.aws_iam_policy_document.eks_assume_role.json
-  # Missing tags (violates require-tags policy)
-}
-
-data "aws_iam_policy_document" "eks_assume_role" {
-  statement {
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "Service"
-      identifiers = ["eks.amazonaws.com"]
+terraform {
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 5.0"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 5.0"
     }
   }
 }
 
-resource "aws_iam_role" "eks_node_group" {
-  name = "${var.cluster_name}-node-group-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "ec2.amazonaws.com"
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
-  # Missing tags (violates require-tags policy)
+provider "google" {
+  project = var.project_id
+  region  = var.region
 }
 
-resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
-  role       = aws_iam_role.eks.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+provider "google-beta" {
+  project = var.project_id
+  region  = var.region
 }
 
-resource "aws_iam_role_policy_attachment" "eks_worker_node" {
-  role       = aws_iam_role.eks_node_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
-}
-resource "aws_iam_role_policy_attachment" "eks_cni" {
-  role       = aws_iam_role.eks_node_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
-}
-resource "aws_iam_role_policy_attachment" "ec2_container_registry" {
-  role       = aws_iam_role.eks_node_group.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+# ----------------------------------------------------------------------------
+# Networking — auto-mode VPC + permissive firewall (intentionally broken)
+# ----------------------------------------------------------------------------
+
+resource "google_compute_network" "main" {
+  name                    = "${var.cluster_name}-vpc"
+  auto_create_subnetworks = true
+  # No labels (violates require-labels)
 }
 
-resource "aws_eks_cluster" "main" {
+# Permissive ingress rule — SSH from anywhere (violates CIS 5.6.1)
+resource "google_compute_firewall" "open_ssh" {
+  name      = "${var.cluster_name}-open-ssh"
+  network   = google_compute_network.main.id
+  direction = "INGRESS"
+
+  source_ranges = ["0.0.0.0/0"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
+}
+
+# ----------------------------------------------------------------------------
+# IAM — wildcard ownership granted to the workload SA (violates CIS 4.1.1/4.1.3/4.1.8)
+# ----------------------------------------------------------------------------
+
+# Custom role with a wildcard permission — violates CIS 4.1.3
+resource "google_project_iam_custom_role" "wildcard" {
+  role_id     = "${replace(var.cluster_name, "-", "_")}_wildcard"
+  title       = "Wildcard role"
+  description = "Intentionally wildcard permissions for negative testing"
+  permissions = ["*"]
+}
+
+resource "google_service_account" "overprivileged" {
+  account_id   = "${var.cluster_name}-overpriv"
+  display_name = "Overprivileged Workload SA (negative test)"
+}
+
+# Overly broad role binding — violates CIS 4.1.1 / 4.1.4
+resource "google_project_iam_member" "owner_on_workload" {
+  project = var.project_id
+  role    = "roles/owner"
+  member  = "serviceAccount:${google_service_account.overprivileged.email}"
+}
+
+# Token-creator on a broad principal — violates CIS 4.1.8
+resource "google_service_account_iam_member" "broad_token_creator" {
+  service_account_id = google_service_account.overprivileged.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "allAuthenticatedUsers"
+}
+
+# ----------------------------------------------------------------------------
+# GKE cluster — public endpoint, no audit logging, no encryption, legacy ABAC
+# ----------------------------------------------------------------------------
+
+resource "google_container_cluster" "main" {
+  provider = google-beta
+
   name     = var.cluster_name
-  role_arn = aws_iam_role.eks.arn
-  version  = var.cluster_version
+  location = var.region
 
-  vpc_config {
-    subnet_ids              = aws_subnet.public[*].id
-    endpoint_private_access = false  # Violates CIS 5.4.2 (should be true)
-    endpoint_public_access  = true   # Violates CIS 5.4.3 (should be false)
+  network = google_compute_network.main.id
+
+  remove_default_node_pool = false
+  initial_node_count       = 1
+
+  enable_legacy_abac = true # Violates CIS 2.2.1 / 5.8.x
+
+  private_cluster_config {
+    enable_private_nodes    = false # Violates CIS 5.6.5
+    enable_private_endpoint = false # Violates CIS 5.6.4
   }
 
-  # No audit logging enabled (violates CIS 2.1.1, 2.1.2, 2.1.3)
-  enabled_cluster_log_types = []
-
-  kubernetes_network_config {
-    service_ipv4_cidr = "10.100.0.0/16"
+  # No master_authorized_networks_config — public endpoint reachable from anywhere
+  # No workload_identity_config — violates CIS 5.2.1 / 5.8.1
+  # No database_encryption — violates CIS 5.10.1
+  # logging_config left to defaults / empty so audit logs are not emitted
+  logging_config {
+    enable_components = []
   }
 
-  # No encryption config (violates CIS 5.3.1)
-  # Missing tags (violates require-tags policy)
-}
+  network_policy {
+    enabled = false # Violates CIS 4.3.1 / 5.6.7
+  }
 
-# Non-compliant launch template (violates CIS 3.1.1 and 3.2.1)
-resource "aws_launch_template" "noncompliant_nodes" {
-  name_prefix   = "${var.cluster_name}-noncompliant-"
-  instance_type = var.node_instance_type
-  
-  vpc_security_group_ids = [aws_security_group.nodes.id]
-  
-  # No user data script - relies on default EKS configuration
-  # This results in:
-  # - Default file permissions (may not be CIS compliant)
-  # - Anonymous authentication enabled by default
-  # - No explicit kubelet security configuration
-  
-  tag_specifications {
-    resource_type = "instance"
-    tags = {
-      Name = "${var.cluster_name}-noncompliant-node"
-      # Missing standard tags (violates require-tags policy)
+  master_auth {
+    client_certificate_config {
+      issue_client_certificate = true # Legacy client-cert auth — violates CIS 5.8.x
     }
   }
+
+  # No resource_labels (violates require-labels)
 }
 
-resource "aws_eks_node_group" "main" {
-  cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "noncompliant-ng"
-  node_role_arn   = aws_iam_role.eks_node_group.arn
-  subnet_ids      = aws_subnet.public[*].id  # Public subnets (violates CIS 5.4.3)
-  
-  # Use non-compliant launch template
-  launch_template {
-    id      = aws_launch_template.noncompliant_nodes.id
-    version = aws_launch_template.noncompliant_nodes.latest_version
+resource "google_container_node_pool" "main" {
+  provider = google-beta
+
+  name     = "${var.cluster_name}-pool"
+  location = var.region
+  cluster  = google_container_cluster.main.name
+
+  autoscaling {
+    min_node_count = 1
+    max_node_count = 500 # Unbounded autoscaling — violates CIS 5.5.2
   }
-  
-  scaling_config {
-    desired_size = 1
-    min_size     = 1
-    max_size     = 2
+
+  initial_node_count = 1
+
+  node_config {
+    machine_type = var.node_machine_type
+    image_type   = "UBUNTU" # Not the hardened *_CONTAINERD variant — violates CIS 5.5.1
+
+    # service_account omitted — falls back to the Compute Engine default SA (violates CIS 5.2.1 / 4.1.4)
+    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+    shielded_instance_config {
+      enable_secure_boot          = false # Violates CIS 5.5.2
+      enable_integrity_monitoring = false # Violates CIS 5.5.2
+    }
+
+    # No workload_metadata_config — GCE metadata server is exposed (violates CIS 5.4.1)
+    # No labels (violates require-labels)
   }
-  depends_on = [aws_security_group.nodes]
-  # Missing tags (violates require-tags policy)
 }
 
-# Create insecure ECR repository (violates CIS 5.1.1)
-resource "aws_ecr_repository" "insecure_app" {
-  name                 = "${var.cluster_name}-insecure-app"
-  image_tag_mutability = "MUTABLE"
+# ----------------------------------------------------------------------------
+# Artifact Registry — no Container Analysis API enablement (violates CIS 5.1.1)
+# ----------------------------------------------------------------------------
 
-  image_scanning_configuration {
-    scan_on_push = false  # Violates CIS 5.1.1
+resource "google_artifact_registry_repository" "insecure_app" {
+  location      = var.region
+  repository_id = "${var.cluster_name}-insecure-app"
+  description   = "Insecure container repository for negative testing"
+  format        = "DOCKER"
+  mode          = "STANDARD_REPOSITORY"
+  # No labels (violates require-labels)
+  # No corresponding google_project_service "containeranalysis.googleapis.com" (violates CIS 5.1.1)
+}
+
+# ----------------------------------------------------------------------------
+# Secret Manager — automatic replication, no CMEK (violates CIS 5.3.2)
+# ----------------------------------------------------------------------------
+
+resource "google_secret_manager_secret" "insecure_secrets" {
+  secret_id = "${var.cluster_name}-insecure-secrets"
+
+  replication {
+    auto {}
   }
-  # Missing tags (violates require-tags policy)
+  # No labels (violates require-labels)
 }
 
-# Create unencrypted secrets (violates CIS 5.3.2)
-resource "aws_secretsmanager_secret" "insecure_secrets" {
-  name        = "${var.cluster_name}-insecure-secrets"
-  description = "Insecure secrets without KMS encryption"
-  # No kms_key_id specified (violates CIS 5.3.2)
-  # Missing tags (violates require-tags policy)
-}
-
-# Create overly permissive IAM role (violates multiple CIS policies)
-resource "aws_iam_role" "overprivileged_role" {
-  name = "${var.cluster_name}-overprivileged-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "*"  # Too permissive
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
-  # Missing tags (violates require-tags policy)
-}
-
-# Attach overly broad permissions
-resource "aws_iam_role_policy" "overprivileged_policy" {
-  name = "overprivileged-policy"
-  role = aws_iam_role.overprivileged_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = "*"  # Violates CIS 4.1.1, 4.1.2, 4.1.3, 4.1.4
-      Resource = "*"
-    }]
-  })
-}
-
-# Missing required AWS resources that would be caught by policies:
-# - No CloudWatch log group (violates CIS 2.1.2, 2.1.3)
-# - No EKS add-ons (violates CIS 4.3.1) 
-# - No network policies (violates CIS 5.4.4) 
+# Missing resources that compliance policies expect:
+# - No google_kms_crypto_key (violates CIS 5.10.1, 5.3.x)
+# - No google_logging_project_sink (violates CIS 2.1.2)
+# - No google_logging_project_bucket_config (violates CIS 2.1.3)
+# - No kubernetes_network_policy (violates CIS 5.6.7)

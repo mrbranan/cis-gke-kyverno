@@ -1,0 +1,15 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: custom-5.6.4-noncompliant
+policies:
+  - ../../../../policies/kubernetes/pod-security/custom-5.6.4.yaml
+resources:
+  - namespace.yaml
+results:
+  - policy: custom-5.6.4
+    rule: check-restrict-control-plane-endpoint-namespace
+    resources:
+      - noncompliant-ns
+    kind: Namespace
+    result: fail

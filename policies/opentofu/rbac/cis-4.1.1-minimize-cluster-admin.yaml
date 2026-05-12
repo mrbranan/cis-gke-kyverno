@@ -4,18 +4,25 @@ metadata:
   name: cis-4-1-1-minimize-cluster-admin
 spec:
   rules:
-    - name: restrict-cluster-admin-iam-roles
+    - name: restrict-cluster-admin-iam
       assert:
         all:
-          - message: "IAM roles should not have overly broad permissions equivalent to cluster-admin."
+          - message: "No project IAM binding may grant roles/owner."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy_attachment' && contains(values.policy_arn, 'AdministratorAccess')]) == `0`)": true
-          - message: "IAM inline policies should not have wildcard Action permissions."
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/owner']) == `0`): true
+
+          - message: "No project IAM binding may grant roles/editor (use predefined roles or custom least-privilege roles instead)."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && contains(values.policy, '\"Action\":\"*\"')]) == `0`)": true
-          - message: "IAM inline policies with Resource:* should be limited to specific ECR/log operations only."
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/editor']) == `0`): true
+
+          - message: "No project IAM binding may grant roles/container.admin on broad principals (it is GKE cluster-admin)."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role_policy' && contains(values.policy, '\"Resource\":\"*\"') && !contains(values.name, 'ecr')]) == `0`)": true
-          - message: "IAM policies should follow principle of least privilege for EKS access."
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/container.admin' && (values.member == 'allUsers' || values.member == 'allAuthenticatedUsers')]) == `0`): true
+
+          - message: "Custom IAM roles must not include a wildcard ('*') permission."
             check:
-              "(length(planned_values.root_module.resources[?type=='aws_iam_role' && contains(values.name, 'eks')]) > `0`)": true
+              (length(planned_values.root_module.resources[?type=='google_project_iam_custom_role' && contains(values.permissions, '*')]) == `0`): true
+
+          - message: "A dedicated node-pool google_service_account must exist (avoid the Compute Engine default SA)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_service_account' && (contains(values.account_id, 'node') || contains(values.account_id, 'gke'))]) > `0`): true

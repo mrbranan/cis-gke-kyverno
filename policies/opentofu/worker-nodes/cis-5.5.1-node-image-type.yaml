@@ -1,0 +1,12 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-5-1-node-image-type
+spec:
+  rules:
+    - name: hardened-node-image-type
+      assert:
+        all:
+          - message: "GKE node pools must use a hardened node image (image_type must be COS_CONTAINERD or UBUNTU_CONTAINERD)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.node_config) > `0` && values.node_config[0].image_type != 'COS_CONTAINERD' && values.node_config[0].image_type != 'UBUNTU_CONTAINERD']) == `0`): true

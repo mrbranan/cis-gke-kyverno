@@ -1,0 +1,22 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-6-2-vpc-native-cluster
+spec:
+  rules:
+    - name: vpc-native-cluster-networking
+      assert:
+        all:
+          # Note: AWS Network ACLs have no direct GCP analog. The closest CIS-aligned
+          # GCP control is VPC-native (alias IP) clusters — see CIS GKE 5.6.2.
+          - message: "Subnetworks must enable private_ip_google_access=true so private nodes can reach Google APIs without public IPs."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_compute_subnetwork' && values.private_ip_google_access != `true`]) == `0`): true
+
+          - message: "Subnetworks must define secondary_ip_range entries for Pods and Services (VPC-native alias IP)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_compute_subnetwork' && length(values.secondary_ip_range) >= `2`]) > `0`): true
+
+          - message: "GKE cluster must declare ip_allocation_policy.cluster_secondary_range_name (VPC-native cluster)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.ip_allocation_policy) > `0` && values.ip_allocation_policy[0].cluster_secondary_range_name != null && values.ip_allocation_policy[0].cluster_secondary_range_name != '']) > `0`): true

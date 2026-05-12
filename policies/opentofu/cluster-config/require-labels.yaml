@@ -1,0 +1,20 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: require-labels
+spec:
+  rules:
+    - name: require-environment-and-owner-labels
+      match:
+        any:
+          - (planned_values.root_module.resources[?contains(provider_name, 'google')] | length(@) > `0`): true
+      assert:
+        all:
+          # Resource types that lack a `labels` attribute in their Terraform schema are
+          # excluded from this check so the policy doesn't false-fail on plumbing resources.
+          - message: "All Google Cloud resources that support labels/resource_labels must declare 'environment' and 'owner' (lowercase). Found resources without required labels."
+            check:
+              planned_values:
+                root_module:
+                  resources:
+                    (length([?contains(provider_name, 'google') && type != 'google_project_iam_member' && type != 'google_project_iam_binding' && type != 'google_project_iam_custom_role' && type != 'google_service_account_iam_member' && type != 'google_service_account_iam_binding' && type != 'google_project_service' && type != 'google_compute_firewall' && type != 'google_compute_network' && type != 'google_compute_subnetwork' && type != 'google_kms_key_ring' && type != 'google_logging_project_bucket_config' && type != 'google_logging_project_sink' && type != 'google_service_account' && contains(keys(@), 'values') && (values.labels == null || length(keys(values.labels)) == `0`) && (values.resource_labels == null || length(keys(values.resource_labels)) == `0`)]) == `0`): true

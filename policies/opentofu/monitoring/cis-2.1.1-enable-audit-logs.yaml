@@ -4,9 +4,9 @@ metadata:
   name: cis-2-1-1-enable-audit-logs
 spec:
   rules:
-    - name: eks-audit-logging
+    - name: gke-audit-logging
       assert:
         all:
-          - message: "EKS cluster must have audit logging enabled."
+          - message: "GKE cluster must enable API server audit logging (logging_config.enable_components must include API_SERVER)."
             check:
-              (length(planned_values.root_module.resources[?type=='aws_eks_cluster' && values.enabled_cluster_log_types && contains(values.enabled_cluster_log_types, 'audit')]) > `0`): true 
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.logging_config) > `0` && contains(values.logging_config[0].enable_components, 'API_SERVER')]) > `0`): true
