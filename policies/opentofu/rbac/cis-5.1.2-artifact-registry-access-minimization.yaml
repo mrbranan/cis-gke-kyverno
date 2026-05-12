@@ -1,0 +1,16 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-1-2-artifact-registry-access-minimization
+spec:
+  rules:
+    - name: minimize-artifact-registry-iam
+      assert:
+        all:
+          - message: "No principal may be granted roles/artifactregistry.admin (least privilege: writer/reader are sufficient)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/artifactregistry.admin']) == `0`): true
+
+          - message: "At least one project IAM binding must grant roles/artifactregistry.reader (so node pools can pull images)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_project_iam_member' && values.role == 'roles/artifactregistry.reader']) > `0`): true

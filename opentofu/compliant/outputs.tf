@@ -1,29 +1,40 @@
+output "project_id" {
+  description = "Google Cloud project ID"
+  value       = var.project_id
+}
+
 output "region" {
-  description = "AWS region to deploy resources in"
+  description = "GCP region"
   value       = var.region
 }
 
 output "cluster_name" {
-  description = "Name of the EKS cluster"
-  value       = var.cluster_name
+  description = "Name of the GKE cluster"
+  value       = google_container_cluster.main.name
 }
 
 output "cluster_endpoint" {
-  description = "Endpoint for EKS control plane"
-  value       = aws_eks_cluster.main.endpoint
+  description = "Private endpoint of the GKE control plane"
+  value       = google_container_cluster.main.endpoint
+  sensitive   = true
 }
 
-output "cluster_security_group_id" {
-  description = "Security group ID attached to the EKS cluster"
-  value       = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id
+output "node_service_account_email" {
+  description = "Dedicated node-pool service account"
+  value       = google_service_account.gke_nodes.email
 }
 
-output "eks_auth_role_arn" {
-  description = "ARN of the IAM role for EKS authentication"
-  value       = aws_iam_role.eks_auth.arn
+output "workload_identity_pool" {
+  description = "Workload Identity pool for KSA → GSA impersonation"
+  value       = google_container_cluster.main.workload_identity_config[0].workload_pool
 }
 
-output "oidc_provider_arn" {
-  description = "ARN of the OIDC Provider for EKS"
-  value       = aws_iam_openid_connect_provider.eks.arn
-} 
+output "kms_key_id" {
+  description = "Cloud KMS key used for application-layer secrets encryption"
+  value       = google_kms_crypto_key.gke_secrets.id
+}
+
+output "artifact_registry_repository" {
+  description = "Artifact Registry repository ID"
+  value       = google_artifact_registry_repository.app.id
+}

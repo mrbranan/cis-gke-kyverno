@@ -1,0 +1,33 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-8-1-workload-identity
+spec:
+  rules:
+    - name: gke-workload-identity-config
+      assert:
+        all:
+          # Cluster must enable Workload Identity (workload pool set).
+          - message: "GKE cluster must enable Workload Identity (workload_identity_config.workload_pool must be set)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.workload_identity_config) > `0` && values.workload_identity_config[0].workload_pool != null && values.workload_identity_config[0].workload_pool != '']) > `0`): true
+
+          # At least one Google Service Account must exist (workload SA).
+          - message: "At least one google_service_account must be provisioned to back Workload Identity bindings."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_service_account']) > `0`): true
+
+          # At least one Workload Identity binding (KSA → GSA) must exist.
+          - message: "At least one google_service_account_iam_member with role roles/iam.workloadIdentityUser must be defined to bind a Kubernetes ServiceAccount to a Google Service Account."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_service_account_iam_member' && values.role == 'roles/iam.workloadIdentityUser']) > `0`): true
+
+          # Legacy ABAC must be disabled.
+          - message: "GKE cluster must have enable_legacy_abac=false; legacy ABAC bypasses RBAC."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && values.enable_legacy_abac == `true`]) == `0`): true
+
+          # Client-certificate authentication must be disabled.
+          - message: "GKE cluster must not issue client certificates (master_auth.client_certificate_config.issue_client_certificate must be false)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.master_auth) > `0` && length(values.master_auth[0].client_certificate_config) > `0` && values.master_auth[0].client_certificate_config[0].issue_client_certificate == `true`]) == `0`): true

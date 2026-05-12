@@ -5,17 +5,17 @@ metadata:
 policies:
   - ../../../../policies/kubernetes/pod-security/custom-5.3.1.yaml
 resources:
-  - opentofu.json
+  - secret.yaml
 results:
-  - policy: cis-5.3.1-kms-secret-encryption-comprehensive
-    rule: validate-opentofu-eks-encryption
+  - policy: custom-5.3.1
+    rule: validate-secret-encryption
     resources:
-      - json.kyverno.io/v1alpha1
-    kind: json.kyverno.io/v1alpha1
+      - noncompliant-secret
+    kind: Secret
     result: fail
-  - policy: cis-5.3.1-kms-secret-encryption-comprehensive
-    rule: validate-kms-key-policy
+  - policy: custom-5.3.1
+    rule: check-encrypt-secrets-kms
     resources:
-      - json.kyverno.io/v1alpha1
-    kind: json.kyverno.io/v1alpha1
-    result: fail 
+      - noncompliant-secret
+    kind: Secret
+    result: fail

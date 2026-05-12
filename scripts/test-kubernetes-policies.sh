@@ -157,7 +157,7 @@ ORDERED_TF_CATEGORIES=(
     "networking"        # Priority 1: Network security & access controls
     "encryption"        # Priority 2: Data protection at rest/transit
     "rbac"              # Priority 3: IAM & access management
-    "control-plane"     # Priority 4: EKS control plane security
+    "control-plane"     # Priority 4: GKE control plane security
     "worker-nodes"      # Priority 5: Node-level hardening
     "monitoring"        # Priority 6: Audit & observability  
     "cluster-config"    # Priority 7: General configuration

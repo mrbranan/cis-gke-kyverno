@@ -1,0 +1,16 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-5-2-shielded-nodes
+spec:
+  rules:
+    - name: shielded-gke-nodes
+      assert:
+        all:
+          - message: "GKE node pools must enable Shielded GKE Nodes Secure Boot (node_config.shielded_instance_config.enable_secure_boot=true)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.node_config) > `0` && length(values.node_config[0].shielded_instance_config) > `0` && values.node_config[0].shielded_instance_config[0].enable_secure_boot != `true`]) == `0`): true
+
+          - message: "GKE node pools must enable Shielded GKE Nodes Integrity Monitoring (node_config.shielded_instance_config.enable_integrity_monitoring=true)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.node_config) > `0` && length(values.node_config[0].shielded_instance_config) > `0` && values.node_config[0].shielded_instance_config[0].enable_integrity_monitoring != `true`]) == `0`): true

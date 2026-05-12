@@ -4,12 +4,13 @@ metadata:
   name: cis-5-1-1-image-scanning
 spec:
   rules:
-    - name: ecr-image-scanning-enabled
+    - name: artifact-registry-image-scanning-enabled
       assert:
         all:
-          - message: "ECR repositories must have image scanning enabled."
+          - message: "At least one Artifact Registry DOCKER repository must be provisioned for container image management."
             check:
-              (length(planned_values.root_module.resources[?type=='aws_ecr_repository' && values.image_scanning_configuration && values.image_scanning_configuration[0].scan_on_push == `true`]) > `0`): true
-          - message: "ECR repositories should be created for container image management."
+              (length(planned_values.root_module.resources[?type=='google_artifact_registry_repository' && values.format == 'DOCKER']) > `0`): true
+
+          - message: "Container Analysis API (containeranalysis.googleapis.com) must be enabled at the project level to enable vulnerability scanning on Artifact Registry images."
             check:
-              (length(planned_values.root_module.resources[?type=='aws_ecr_repository']) > `0`): true
+              (length(planned_values.root_module.resources[?type=='google_project_service' && values.service == 'containeranalysis.googleapis.com']) > `0`): true

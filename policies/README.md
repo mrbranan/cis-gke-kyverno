@@ -1,21 +1,21 @@
 # Kyverno Policies
 
-This directory contains all Kyverno policies organized by deployment context and CIS EKS Benchmark sections.
+This directory contains all Kyverno policies organized by deployment context and CIS GKE Benchmark sections.
 
 ## Structure
 
 ### Kubernetes Policies (`kubernetes/`)
-Runtime policies that validate live Kubernetes resources in EKS clusters:
+Runtime policies that validate live Kubernetes resources in GKE clusters:
 
 - **[control-plane/](kubernetes/control-plane/)** - Section 2: Control Plane Configuration
-- **[pod-security/](kubernetes/pod-security/)** - Section 5: Pod Security Standards
+- **[pod-security/](kubernetes/pod-security/)** - Section 4 / 5: Pod Security Standards
 - **[rbac/](kubernetes/rbac/)** - Section 4: RBAC and Service Accounts
 - **[scanner/](kubernetes/scanner/)** - CIS scanner result validation
 - **[worker-nodes/](kubernetes/worker-nodes/)** - Section 3: Worker Node Security
 
 #### 🔧 Integrated Node Security Validation
 
-**Worker node policies now use an integrated approach** with our custom CIS scanner:
+**Worker node policies use an integrated approach** with our custom CIS scanner:
 - **Custom CIS Scanner**: DaemonSet that performs node-level checks (file permissions, kubelet settings)
 - **Kyverno Policies**: Validate scanner results from ConfigMaps using CEL expressions
 - **No External Dependencies**: All validation happens within Kyverno
@@ -26,14 +26,16 @@ The scanner performs all 13 CIS worker node checks:
 - System-level security settings
 - Results output as JSON to ConfigMaps for policy validation
 
+> **⚠️ GKE Autopilot incompatibility**: The scanner DaemonSet requires `privileged: true` and `hostPath` volumes, which GKE Autopilot rejects. Run the scanner only on **GKE Standard** clusters; on Autopilot rely on Google's managed-platform attestation for Section 3 controls.
+
 ### OpenTofu/Terraform Policies (`opentofu/`)
 Plan-time policies that validate infrastructure configurations before deployment:
-- **[cluster-config/](opentofu/cluster-config/)** - EKS cluster configuration policies
+- **[cluster-config/](opentofu/cluster-config/)** - GKE cluster configuration policies
 - **[control-plane/](opentofu/control-plane/)** - Control plane infrastructure policies
-- **[encryption/](opentofu/encryption/)** - KMS and encryption policies
+- **[encryption/](opentofu/encryption/)** - Cloud KMS and encryption policies
 - **[monitoring/](opentofu/monitoring/)** - Logging and monitoring policies
-- **[networking/](opentofu/networking/)** - VPC and networking policies
-- **[rbac/](opentofu/rbac/)** - IAM role and permission policies
+- **[networking/](opentofu/networking/)** - VPC, firewall, and networking policies
+- **[rbac/](opentofu/rbac/)** - Google IAM role and permission policies
 - **[worker-nodes/](opentofu/worker-nodes/)** - Worker node infrastructure policies
 
 ## Policy Naming Convention
@@ -54,10 +56,10 @@ Examples:
 
 ### Integrated Validation Approach
 
-Our framework achieves 99% CIS EKS Benchmark compliance through:
+Our framework achieves 99% CIS GKE Benchmark compliance through:
 
 1. **Kyverno Policy Engine** - Central validation engine for all checks
-2. **Custom CIS Scanner** - Node-level security validation
+2. **Custom CIS Scanner** - Node-level security validation (GKE Standard)
 3. **JSON-based Validation** - Structured data for automated compliance
 
 ### Validation Coverage
@@ -66,8 +68,8 @@ Our framework achieves 99% CIS EKS Benchmark compliance through:
 |----------------|----------------|----------|
 | Pod Security Contexts | Native Kyverno | ✅ Complete |
 | RBAC Configurations | Native Kyverno | ✅ Complete |
-| File Permissions | Custom Scanner + Kyverno | ✅ Complete |
-| Kubelet Configuration | Custom Scanner + Kyverno | ✅ Complete |
+| File Permissions | Custom Scanner + Kyverno | ✅ Complete (Standard only) |
+| Kubelet Configuration | Custom Scanner + Kyverno | ✅ Complete (Standard only) |
 | Infrastructure Config | OpenTofu JSON Scan | ✅ Complete |
 | Network Policies | Native Kyverno | ✅ Complete |
 | Audit Logging | Native Kyverno | ✅ Complete |
@@ -75,7 +77,7 @@ Our framework achieves 99% CIS EKS Benchmark compliance through:
 ### Custom CIS Scanner Integration
 
 The scanner (`k8s/cis-scanner-pod.yaml`) provides:
-- **Automated Deployment**: Runs as DaemonSet on all nodes
+- **Automated Deployment**: Runs as DaemonSet on all nodes (GKE Standard)
 - **Comprehensive Checks**: All 13 worker node CIS controls
 - **JSON Output**: Machine-readable results
 - **ConfigMap Storage**: Results accessible to Kyverno policies
@@ -83,7 +85,7 @@ The scanner (`k8s/cis-scanner-pod.yaml`) provides:
 Example scanner output:
 ```json
 {
-  "node": "worker-1",
+  "node": "gke-standard-node-1",
   "timestamp": "2025-01-23T12:00:00Z",
   "scanner": "custom-cis-scanner",
   "checks": [

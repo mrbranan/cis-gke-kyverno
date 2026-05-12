@@ -1,5 +1,5 @@
 # Kyverno CIS Resource Access RBAC Extension
-# This extends Kyverno's default RBAC with resource access permissions required for CIS EKS validation
+# This extends Kyverno's default RBAC with resource access permissions required for CIS GKE validation
 
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

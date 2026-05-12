@@ -66,6 +66,7 @@ ebook.md
 docs/images/
 generate_docx.py
 
-# Sensitive Terraform-generated private key
-terraform/compliant/bastion_key.pem
-terraform/compliant/tfplan
+# Sensitive credentials (Google Cloud service account keys)
+opentofu/**/sa-*.json
+*-credentials.json
+gcloud-application-default-credentials.json

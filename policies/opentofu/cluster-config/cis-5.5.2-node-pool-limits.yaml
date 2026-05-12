@@ -1,0 +1,33 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-5-2-node-pool-limits
+spec:
+  rules:
+    - name: gke-node-pool-limits
+      assert:
+        all:
+          # Each node pool must declare autoscaling bounds.
+          - message: "GKE node pools must declare autoscaling.{min_node_count,max_node_count}."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.autoscaling) > `0`]) > `0`): true
+
+          # max_node_count must not exceed 100 (sane upper bound; tune for your environment).
+          - message: "GKE node pool autoscaling.max_node_count must not exceed 100 nodes."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.autoscaling) > `0` && values.autoscaling[0].max_node_count > `100`]) == `0`): true
+
+          # min_node_count must be at least 1 for availability.
+          - message: "GKE node pool autoscaling.min_node_count must be at least 1."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.autoscaling) > `0` && values.autoscaling[0].min_node_count < `1`]) == `0`): true
+
+          # max_node_count must not be more than 10× min_node_count (bounded scaling).
+          - message: "GKE node pool autoscaling.max_node_count must not exceed 10× min_node_count."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.autoscaling) > `0` && values.autoscaling[0].max_node_count > (values.autoscaling[0].min_node_count * `10`)]) == `0`): true
+
+          # Cluster/node pool must carry an `owner` resource_label or label.
+          - message: "Cluster and/or node pools should carry an 'owner' label to indicate ownership and resource management."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && values.resource_labels != null && contains(keys(values.resource_labels), 'owner')]) > `0` || length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.node_config) > `0` && values.node_config[0].labels != null && contains(keys(values.node_config[0].labels), 'owner')]) > `0`): true

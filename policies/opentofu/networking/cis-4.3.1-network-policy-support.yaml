@@ -4,12 +4,9 @@ metadata:
   name: cis-4-3-1-network-policy-support
 spec:
   rules:
-    - name: eks-cni-network-policy-support
+    - name: gke-network-policy-support
       assert:
         all:
-          - message: "EKS cluster should have CNI that supports network policies (e.g., Calico, Cilium)."
+          - message: "GKE cluster must support NetworkPolicies: either network_policy.enabled=true with provider=CALICO, or datapath_provider=ADVANCED_DATAPATH (Dataplane V2)."
             check:
-              (length(planned_values.root_module.resources[?type=='aws_eks_addon' && (contains(values.addon_name, 'aws-vpc-cni') || contains(values.addon_name, 'vpc-cni'))]) > `0`): true
-          - message: "VPC should be configured to support network policies."
-            check:
-              (length(planned_values.root_module.resources[?type=='aws_vpc' && values.enable_dns_support == `true`]) > `0`): true
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.network_policy) > `0` && values.network_policy[0].enabled == `true` && values.network_policy[0].provider == 'CALICO']) > `0` || length(planned_values.root_module.resources[?type=='google_container_cluster' && values.datapath_provider == 'ADVANCED_DATAPATH']) > `0`): true

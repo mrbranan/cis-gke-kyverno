@@ -4,12 +4,17 @@ metadata:
   name: cis-2-1-2-audit-log-destinations
 spec:
   rules:
-    - name: eks-audit-log-destinations
+    - name: gke-audit-log-destinations
       assert:
         all:
-          - message: "EKS cluster audit logs must be configured with proper destinations (CloudWatch Logs)."
+          - message: "GKE cluster logging_config.enable_components must include SYSTEM_COMPONENTS and WORKLOADS so audit events are emitted."
             check:
-              (length(planned_values.root_module.resources[?type=='aws_cloudwatch_log_group' && contains(values.name, 'eks')]) > `0`): true
-          - message: "CloudWatch log group must have retention period configured for audit logs."
+              (length(planned_values.root_module.resources[?type=='google_container_cluster' && length(values.logging_config) > `0` && contains(values.logging_config[0].enable_components, 'SYSTEM_COMPONENTS') && contains(values.logging_config[0].enable_components, 'WORKLOADS')]) > `0`): true
+
+          - message: "Cluster audit logs must be routed to a centrally managed destination via a google_logging_project_sink."
             check:
-              (length(planned_values.root_module.resources[?type=='aws_cloudwatch_log_group' && values.retention_in_days]) > `0`): true
+              (length(planned_values.root_module.resources[?type=='google_logging_project_sink' && values.destination != null && values.destination != '']) > `0`): true
+
+          - message: "The audit log sink filter must target Kubernetes cluster resources (resource.type=k8s_cluster)."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_logging_project_sink' && contains(values.filter, 'resource.type=k8s_cluster')]) > `0`): true

@@ -1,0 +1,12 @@
+apiVersion: json.kyverno.io/v1alpha1
+kind: ValidatingPolicy
+metadata:
+  name: cis-5-4-1-gke-metadata-server
+spec:
+  rules:
+    - name: gke-metadata-server-enforced
+      assert:
+        all:
+          - message: "GKE node pools must enable the GKE Metadata Server (node_config.workload_metadata_config.mode must be GKE_METADATA) so the legacy GCE metadata endpoint is blocked."
+            check:
+              (length(planned_values.root_module.resources[?type=='google_container_node_pool' && length(values.node_config) > `0` && (length(values.node_config[0].workload_metadata_config) == `0` || values.node_config[0].workload_metadata_config[0].mode != 'GKE_METADATA')]) == `0`): true
